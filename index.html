@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Crewe Roads Visited</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<style>
+  :root { --bg:#fff; --fg:#111; --muted:#667; --line:#e3e5ea; --accent:#16a34a; --chip:#f1f3f6; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#16181d; --fg:#eef0f4; --muted:#9aa3b2; --line:#2a2e37; --chip:#242831; }
+  }
+  * { box-sizing: border-box; }
+  html, body { height:100%; margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; background:var(--bg); color:var(--fg); }
+  #map { position:absolute; inset:0; }
+  #panel { position:absolute; left:0; right:0; bottom:0; z-index:1000; background:var(--bg); border-radius:16px 16px 0 0;
+    box-shadow:0 -4px 20px rgba(0,0,0,.25); height:46vh; height:46dvh; display:flex; flex-direction:column;
+    transition:height .2s; padding-bottom:env(safe-area-inset-bottom,0); }
+  #panel.min { height:92px; }
+  #handle { padding:8px 14px 6px; cursor:pointer; }
+  #handle .bar { width:40px; height:4px; background:var(--line); border-radius:2px; margin:0 auto 8px; }
+  #top { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+  #count { font-weight:700; font-size:15px; }
+  #status { font-size:12px; color:var(--muted); }
+  #prog { height:6px; background:var(--chip); border-radius:3px; margin-top:6px; overflow:hidden; }
+  #prog > div { height:100%; width:0; background:var(--accent); transition:width .3s; }
+  #controls { display:flex; gap:6px; padding:4px 14px 8px; }
+  #search { flex:1; min-width:0; padding:9px 12px; border-radius:10px; border:1px solid var(--line); background:var(--chip); color:var(--fg); font-size:16px; }
+  button { font:inherit; font-size:13px; padding:8px 10px; border-radius:10px; border:1px solid var(--line); background:var(--chip); color:var(--fg); }
+  button.on { background:var(--accent); color:#fff; border-color:var(--accent); }
+  #list { flex:1; overflow-y:auto; -webkit-overflow-scrolling:touch; border-top:1px solid var(--line); }
+  .row { display:flex; align-items:center; gap:10px; padding:11px 14px; border-bottom:1px solid var(--line); }
+  .row input { width:22px; height:22px; accent-color:var(--accent); flex:none; }
+  .row .nm { flex:1; font-size:15px; }
+  .row .nm small { color:var(--muted); display:block; font-size:11px; }
+  .row .go { flex:none; padding:6px 9px; }
+  .row.nomap .go { display:none; }
+  .leaflet-tooltip { font-weight:600; }
+  #track { position:absolute; z-index:1000; top:calc(env(safe-area-inset-top,0px) + 10px); left:10px; padding:11px 14px; font-weight:700;
+    box-shadow:0 2px 10px rgba(0,0,0,.3); background:var(--bg); }
+  #track.on { background:#2563eb; color:#fff; border-color:#2563eb; }
+  #toast { position:absolute; z-index:1001; left:50%; top:calc(env(safe-area-inset-top,0px) + 62px); transform:translateX(-50%);
+    background:#16a34a; color:#fff; padding:9px 16px; border-radius:20px; font-weight:600; font-size:14px; opacity:0;
+    transition:opacity .25s; pointer-events:none; white-space:nowrap; box-shadow:0 2px 10px rgba(0,0,0,.3); }
+  #toast.show { opacity:1; }
+  .me { width:18px; height:18px; border-radius:50%; background:#2563eb; border:3px solid #fff; box-shadow:0 0 0 2px rgba(37,99,235,.4); }
+  #tools { padding:8px 14px 10px; display:flex; gap:6px; flex-wrap:wrap; border-top:1px solid var(--line); }
+  #tools button { font-size:12px; }
+</style>
+</head>
+<body>
+<div id="map"></div>
+<button id="track">📍 Track me</button>
+<div id="toast"></div>
+<div id="panel">
+  <div id="handle">
+    <div class="bar"></div>
+    <div id="top"><span id="count">0 / 0 visited</span><span id="status">Loading map…</span></div>
+    <div id="prog"><div></div></div>
+  </div>
+  <div id="controls">
+    <input id="search" type="search" placeholder="Search roads…" autocomplete="off">
+    <button data-f="all" class="on">All</button>
+    <button data-f="no">To do</button>
+    <button data-f="yes">Done</button>
+  </div>
+  <div id="list"></div>
+  <div id="tools">
+    <button id="exp">Export backup</button>
+    <button id="imp">Import backup</button>
+    <button id="clr">Clear all</button>
+  </div>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script>
+const STREETS = ["ABBEY PLACE", "ABINGTON CLOSE", "ACACIA CRESCENT", "ACER AVENUE", "ACORN BANK CLOSE", "ACTON ROAD", "ADA CRESCENT", "ADDERLEY CLOSE", "ADELAIDE STREET", "ADLINGTON CLOSE", "ADLINGTON ROAD", "ALBAN STREET", "ALBERT STREET", "ALBION STREET", "ALCOCK PLACE", "ALDER DRIVE", "ALDERSEY ROAD", "ALEXANDRA PLACE", "ALFRED CARTWRIGHT GROVE", "ALLEN PLACE", "ALLMAN CLOSE", "ALMA AVENUE", "ALMOND AVENUE", "ALTON STREET", "AMBUSCADE CLOSE", "AMY STREET", "ANDERSON CLOSE", "ANZAC DRIVE", "ARDEN SQUARE", "ARDLEIGH CLOSE", "ARLINGTON CLOSE", "ARTHUR STREET", "ARTLE ROAD", "ASH ROAD", "ASHBANK PLACE", "ASHMUIR CLOSE", "ASHVILLE COURT", "ASTBURY CLOSE", "ATHOLL AVENUE", "AUDLEY STREET", "AVON DRIVE", "AYSGARTH AVENUE", "BADGER AVENUE", "BAILEY CLOSE", "BAKER CLOSE", "BALMORAL AVENUE", "BARKER STREET", "BARN CROFT ROAD", "BARN FIELD CLOSE", "BARN MEADOW WAY", "BARNABAS AVENUE", "BARNATO CLOSE", "BARNETT WALK", "BARRIE GROVE", "BARROWS CLOSE", "BARROWS GREEN", "BARTHOMLEY CRESCENT", "BASFORD ROAD", "BATEMAN CLOSE", "BECCONSALL CLOSE", "BECCONSALL DRIVE", "BECKFORD CLOSE", "BEDFORD COURT", "BEDFORD GARDENS", "BEDFORD PLACE", "BEDFORD STREET", "BEECH GROVE", "BEECH STREET", "BEECHCROFT AVENUE", "BELGRAVE ROAD", "BELTONY DRIVE", "BENJAFIELD COURT", "BENNETT CLOSE", "BENTLEY DRIVE", "BESSEMER WAY", "BESWICK DRIVE", "BETJEMAN WAY", "BETLEY STREET", "BEXINGTON DRIVE", "BICKERTON CLOSE", "BIDVALE WAY", "BILLINGTON CLOSE", "BILLINGTON ROAD", "BILTON WAY", "BINYON WAY", "BIRCH AVENUE", "BIRCH CLOSE", "BIRCHALL WALK", "BIRCHMUIR CLOSE", "BLEASDALE ROAD", "BLOUNT CLOSE", "BLUNSTONE CLOSE", "BOADICEA DRIVE", "BODNANT CLOSE", "BOLSHAW CLOSE", "BOWEN COOKE AVENUE", "BOWEN STREET", "BOWLAND CROFT", "BRACKENWOOD CLOSE", "BRADELEY HALL ROAD", "BRADFIELD ROAD", "BRAMHALL ROAD", "BRAY CLOSE", "BRECON WAY", "BRIAN PALIN WAY", "BRIDLE ROAD", "BRIERLEY STREET", "BRIGGS AVENUE", "BRIGHT STREET", "BRITANNIA CLOSE", "BROAD STREET", "BROADLEIGH WAY", "BROMLEY CLOSE", "BROOK CLOSE", "BROOK STREET", "BROOKDALE PARK", "BROOKFIELD COURT", "BROOKHOUSE DRIVE", "BROOKLANDS GROVE", "BROOKLYN STREET", "BROOKSIDE GREEN", "BROOKVIEW CLOSE", "BROOM CROFT GARDENS", "BROOM STREET", "BROUGHTON ROAD", "BROWN LEES CLOSE", "BROWNING STREET", "BUCHAN GROVE", "BUDE CLOSE", "BULKELEY STREET", "BURJEN WAY", "BURLEA CLOSE", "BURNS DRIVE", "BURTON GROVE", "BUTTERMERE DRIVE", "BUXTON AVENUE", "BYRON CLOSE", "CALDER AVENUE", "CAMM STREET", "CANFORD CLOSE", "CAPENHURST AVENUE", "CARLISLE STREET", "CARRINGTON WAY", "CASSON STREET", "CASTLE STREET", "CASTLEMERE DRIVE", "CATHERINE STREET", "CAVENDISH ROAD", "CEDAR WAY", "CHALFIELD CLOSE", "CHAMBERS STREET", "CHAPEL STREET", "CHAPELMERE COURT", "CHARLCOTE CRESCENT", "CHARLES STREET", "CHARLES WAYTE DRIVE", "CHARLESWORTH STREET", "CHASSAGNE SQUARE", "CHAUCER ROAD", "CHELL STREET", "CHELTENHAM CRESCENT", "CHERRY TREE ROAD", "CHESTER SQUARE", "CHESTER STREET", "CHESTNUT GROVE", "CHETWODE STREET", "CHEYNEY WALK", "CHILWORTH CLOSE", "CHRISTLETON AVENUE", "CHURCH FIELD CLOSE", "CHURCHMERE DRIVE", "CIVIC CENTRE", "CLAREMONT ROAD", "CLARENCE GROVE", "CLAUGHTON AVENUE", "CLAYTON CLOSE", "CLEMENT DRIVE", "CLIFFE ROAD", "CLIFTON AVENUE", "CLIFTON STREET", "CLIVE ROAD", "CLOUGH WALK", "CLOVER CLOSE", "CLOVER CROFT PLACE", "CLYDE GROVE", "CLYDESDALE AVENUE", "COLERIDGE WAY", "COLLINBROOK AVENUE", "COLLINS STREET", "COLUMBINE ROAD", "COMBERMERE PLACE", "CONRAD CLOSE", "CONWAY CLOSE", "COPPENHALL GROVE", "COPPENHALL HEYES", "COPPENHALL LANE ROUNDABOUT", "COPPICEMERE DRIVE", "CORMORANT CLOSE", "CORNWALL GROVE", "CORONATION CRESCENT", "CORONATION ROUNDABOUT", "CORONATION STREET", "COTTERILL STREET", "COWLEY WAY", "CRABTREE GROVE", "CRANAGE ROAD", "CRANBORNE ROAD", "CRANEBROOK CLOSE", "CREWE GREEN ROAD", "CREWE ROAD", "CREWE ROAD ROUNDABOUT", "CREWE STREET", "CROFTERS CLOSE", "CROFTERS CLOSE NORTHEASTWARD", "CROMER DRIVE", "CROSS STREET", "CROSSWAY", "CULLAND STREET", "CUMBERLAND CLOSE", "CYRIL PLACE", "DALE WAY", "DANE PLACE", "DARIO GRADI DRIVE", "DARLEY AVENUE", "DARLINGTON AVENUE", "DAVENHAM CRESCENT", "DAVENPORT AVENUE", "DAVENPORT STREET", "DELAMERE STREET", "DENESIDE AVENUE", "DENSTON CLOSE", "DENVER AVENUE", "DERBY STREET", "DERRINGTON AVENUE", "DEVA ROAD", "DEWES STREET", "DILLORS CROFT", "DODDINGTON ROAD", "DORFOLD STREET", "DORRIC WAY", "DOUGLAS FORREST CLOSE", "DRAYTON CRESCENT", "DRURY CLOSE", "DUCHY ROAD", "DUKE STREET", "DUNWOODY WAY", "DUTTON WAY", "EADIE GROVE", "EARLE STREET", "EATON STREET", "EDLESTON ROAD", "EDWARD KEMP CLOSE", "EDWARD STREET", "ELEANOR CLOSE", "ELECTRA WAY", "ELECTRICITY STREET", "ELIOT CLOSE", "ELIZABETH STREET", "ELLESMERE PLACE", "ELLIS STREET", "ELM DRIVE", "ELMSTEAD CRESCENT", "EMPEROR WAY", "EMPRESS DRIVE", "ENGLEFIELD CLOSE", "ENGLESEA GROVE", "ENTWISTLE WAY", "ERNEST COPE ROAD", "ERNEST STREET", "ETHEL ELKS CLOSE", "EVANS STREET", "FAIRBURN AVENUE", "FAIRHURST ROAD", "FALCON DRIVE", "FALLOWFIELD COURT", "FALMOUTH ROAD", "FANSHAWE WALK", "FARMER CLOSE", "FARMLEIGH DRIVE", "FARRIER COURT", "FAWCETT PLACE", "FERN COURT", "FERNBANK CLOSE", "FIRBECK GARDENS", "FIRST AVENUE", "FIRWOOD WALK", "FLAG LANE", "FLETCHER STREET", "FLOUR MILL WAY", "FLOWERS LANE", "FLUDE CLOSE", "FORD CLOSE", "FORD LANE", "FORGE STREET", "FOULKES AVENUE", "FOURTH AVENUE", "FOWLER CLOSE", "FOX COVERT WAY", "FOXES HOLLOW", "FOXGLOVE CLOSE", "FOXHOLME COURT", "FRANCES STREET", "FRANK BOTT AVENUE", "FRANK WEBB AVENUE", "FRANKLYN AVENUE", "FULLER DRIVE", "FURBER STREET", "FURNIVAL STREET", "GAINSBOROUGH ROAD", "GATEFIELD STREET", "GATEWAY", "GAWSWORTH AVENUE", "GEORGE CRAWFORD ROAD", "GEORGE DINGLEY CLOSE", "GEORGE GARDENS", "GILLOW CLOSE", "GLADSTONE STREET", "GLOVER STREET", "GODDARD STREET", "GOLDING DRIVE", "GOODE WAY", "GORDON GEDDES WAY", "GOULDEN STREET", "GRAND JUNCTION WAY", "GRANGE CLOSE", "GRASMERE AVENUE", "GREAT TITHES PLACE", "GREEN FIELD WAY", "GREENACRES", "GREENDALE GARDENS", "GREENWAY", "GRESTY GREEN ROAD", "GRESTY ROAD", "GRESTY TERRACE", "GREYSTONE PARK", "GROBY ROAD", "GROSVENOR COURT", "GROSVENOR STREET", "GUILLEMOT CLOSE", "HAIG DRIVE", "HALL OSHAW STREET", "HALLSHAW AVENUE", "HALTON DRIVE", "HAMMOND STREET", "HANBURY CLOSE", "HARGRAVE AVENUE", "HARRIS CLOSE", "HARRISON DRIVE", "HASLEMERE WAY", "HASLINGTON BY-PASS", "HAWESWATER AVENUE", "HAWTHORN GROVE", "HAYLING CLOSE", "HAZEL GROVE", "HEALEY CLOSE", "HEATH STREET", "HEATHFIELD AVENUE", "HELMSDALE CLOSE", "HENDON CLOSE", "HENRY COOPER ROAD", "HENRY STREET", "HERALD DRIVE", "HERBERT STREET", "HERBERT SWINDELLS CLOSE", "HERDMAN STREET", "HERON CRESCENT", "HESKETH CROFT", "HEWITT STREET", "HEYWOOD GREEN", "HIGH STREET", "HIGHER CROFT DRIVE", "HIGHGATE CLOSE", "HIGHTOWN", "HILL STREET", "HILLSIDE DRIVE", "HINTON ROAD", "HOLBURY CLOSE", "HOLLAND STREET", "HOLLINSHEAD GROVE", "HOLMLEA DRIVE", "HOLT STREET", "HOOD GROVE", "HOPE STREET", "HORNBEAM CLOSE", "HOSPITAL STREET", "HOTHERSALL CLOSE", "HOTSPUR ROAD", "HOUSE YARD CLOSE", "HOVE CLOSE", "HOWARD STREET", "HOWBECK WALK", "HUGHES DRIVE", "HULME STREET", "HUNGERFORD AVENUE", "HUNGERFORD ROAD", "HUNGERFORD TERRACE", "HURCOMB WAY", "HURN CLOSE", "HYTHE AVENUE", "IVATT DRIVE", "JACKSON GROVE", "JAMES ATKINSON WAY", "JAMES GIBBONS ROAD", "JESMOND CRESCENT", "JOE BROWN CLOSE", "JOHN MADDOCK DRIVE", "JOHN ROBINSON PLACE", "JOHN STREET", "JONES AVENUE", "JOSEPH LUCAS ROAD", "JOSEPH REDDROP WAY", "JUBILEE AVENUE", "KAYS CROFT DRIVE", "KEMPTON AVENUE", "KEN WOOLLEY ROAD", "KENTS LANE", "KESTREL DRIVE", "KETTELL AVENUE", "KIDSTON DRIVE", "KINGSWAY", "KINLOCH CLOSE", "KIPLING WAY", "KITCHENER ROAD", "LABURNUM GROVE", "LAMBOURN DRIVE", "LANCASTER FIELDS", "LANGLEY DRIVE", "LANSDOWNE ROAD", "LATIMER DRIVE", "LAURA STREET", "LAURESTON AVENUE", "LAWFORD CLOSE", "LAWRENCE STREET", "LAWTON STREET", "LEA AVENUE", "LEIGHTON STREET", "LEIGHTON VIEW", "LEWIS STREET", "LIME STREET", "LIME TREE AVENUE", "LINCOLN STREET", "LINDEN DRIVE", "LINGFIELD DRIVE", "LINNET CLOSE", "LITTLE CROSS CLOSE", "LOCHLEVEN ROAD", "LOCKITT STREET", "LODGEFIELDS DRIVE", "LONGFORD STREET", "LORD STREET", "LUDFORD STREET", "LUDLOW AVENUE", "LUNT AVENUE", "LYCEUM CLOSE", "LYCEUM WAY", "LYNBROOK ROAD", "LYNCROFT CLOSE", "MABLINS LANE", "MACON COURT", "MACON WAY", "MADELEY STREET", "MAGECROFT", "MALBANK ROAD", "MALLARD WAY", "MALORY CLOSE", "MANCHESTER BRIDGE", "MANNING STREET", "MANOR FARM DRIVE", "MANOR WAY", "MAPLE GROVE", "MAPLINS MOSS PLACE", "MARCH STREET", "MARKET CENTRE", "MARKET CLOSE", "MARKET SQUARE", "MARKET STREET", "MARLEY AVENUE", "MARSHALL CLOSE", "MARSHFIELD AVENUE", "MARTHA CLOSE", "MARY STREET", "MASEFIELD DRIVE", "MASON CLOSE", "MAUL FIELD CLOSE", "MAVOR COURT", "MAW GREEN CLOSE", "MAW GREEN ROAD", "MAXWELL STREET", "MAYFAIR DRIVE", "MAYFIELD MEWS", "MAYMAN CLOSE", "MCLAREN STREET", "MCNEILL AVENUE", "MELFORD CLOSE", "MELLOR STREET", "MELROSE DRIVE", "MERCHANTS COURT", "MERE BROOK WALK", "MEREBANK ROAD", "MEREDITH STREET", "MERESIDE CLOSE", "MERLIN COURT", "MERLIN WAY", "MERRILLS AVENUE", "MICKLEWRIGHT AVENUE", "MIDDLEWICH STREET", "MILL BRIDGE CLOSE", "MILL STREET", "MILLER CLOSE", "MILLS WAY", "MINSHULL NEW ROAD", "MIRION STREET", "MONARCH CLOSE", "MONK STREET", "MONKS LANE", "MORGAN CLOSE", "MOSS CROFT", "MOSS FIELD PLACE", "MOSS LANE", "MOSS SQUARE", "MOSSDALE CLOSE", "MOSSFIELDS", "MOSSFORD AVENUE", "MOUNT PLEASANT", "MULSANNE ROW", "MYRTLE STREET", "NANTWICH ROAD ROUNDABOUT", "NARROW LANE", "NELSON STREET", "NEVILLE STREET", "NEWBURY AVENUE", "NEWCASTLE STREET", "NEWDIGATE STREET", "NEWFIELD DRIVE", "NEWTON STREET", "NIGEL GRESLEY CLOSE", "NILE STREET", "NIXON STREET", "NORBRECK AVENUE", "NORCOP ROAD", "NORTH STAFFORD STREET", "NORTH STREET", "NORTH STREET ROUNDABOUT", "NORTHBANK WALK", "NUTFIELD AVENUE", "OAK STREET", "OAK TREE CLOSE", "OAK TREE DRIVE", "OAKHURST DRIVE", "OAKLEY STREET", "OAKWOOD CRESCENT", "OLD CREWE GREEN ROAD", "OLD GORSE CLOSE", "OLD ORCHARD PLACE", "OLD PARK ROAD", "ORCHARD STREET", "ORCHARDFIELD CLOSE", "ORION WAY", "OWEN STREET", "OXFORD STREET", "PADMORE CLOSE", "PADSTOW CLOSE", "PADWORTH PLACE", "PARKERS ROAD", "PARKFIELD", "PARKSTONE DRIVE", "PARN CLOSE", "PARTRIDGE CLOSE", "PEAR TREE AVENUE", "PEDLEY STREET", "PEEL SQUARE", "PEEL STREET", "PELICAN CLOSE", "PENBROOK CLOSE", "PENDLE CLOSE", "PENNYOAK DRIVE", "PERCIVAL DRIVE", "PERRY FIELDS", "PETER ELLSON CLOSE", "PETER PLACE", "PHILIP TAYLOR DRIVE", "PICKERING CROFT PLACE", "PICKING DRIVE", "PINEWOOD COURT", "PLANE TREE DRIVE", "POPLAR GROVE", "PREECE COURT", "PRIMROSE HILL", "PRINCE ALBERT STREET", "PRINCESS STREET", "PRIORY CLOSE", "PROBERT CLOSE", "PRUNUS ROAD", "PURSE DRIVE", "PYMS LANE", "PYRUS AVENUE", "QUAKERS COPPICE", "QUEEN STREET", "QUEENS PARK DRIVE", "QUEENS PARK GARDENS", "QUEENSWAY", "RAILTON AVENUE", "RAILWAY STREET", "RAILWAY VIEW", "RAINBOW STREET", "RAMSBOTTOM STREET", "RAMSBOTTOM STREET NORTH", "RANDALLS DRIVE", "REDWOOD DRIVE", "REID STREET", "REMER STREET", "RENAISSANCE COURT", "RENAISSANCE WAY", "RHODEN STREET", "RICHARD DARROCH WAY", "RICHARD MOON STREET", "RICHARD STREET", "RICHMOND ROAD", "RIDDING DRIVE", "RIDGWAY STREET", "RIGBY AVENUE", "RIGG STREET", "RIMSDALE CLOSE", "ROBERT LEWIS AVENUE", "ROCHESTER CRESCENT", "ROCKWOOD AVENUE", "ROCKWOOD CLOSE", "ROEBUCK STREET", "ROEDEAN WALK", "ROLLS AVENUE", "ROOK STREET", "ROPE GARDENS", "ROSE TERRACE", "ROSEWOOD CLOSE", "ROWALLAN PLACE", "ROWANS CLOSE", "ROWTON ROAD", "ROYCE CLOSE", "RUBIN DRIVE", "RUDHEATH CLOSE", "RUSKIN ROAD", "RUSSET CLOSE", "RYDAL MOUNT", "RYDE CLOSE", "RYEBANK AVENUE", "SALISBURY AVENUE", "SALISBURY CLOSE", "SAMSON CLOSE", "SAMUEL ARMSTRONG WAY", "SAMUEL STREET", "SANDERSON CLOSE", "SANDIWAY ROAD", "SANDON PARK GARDENS", "SANDON STREET", "SANDOWN ROAD", "SAUNDERS STREET", "SAVOY ROAD", "SCHOLEFIELD DRIVE", "SCHOOL CRESCENT", "SCOTT AVENUE", "SEAGULL CLOSE", "SEATON CLOSE", "SECOND AVENUE", "SEDGEMERE AVENUE", "SELSEY CLOSE", "SELWORTHY DRIVE", "SHAKESPEARE DRIVE", "SHARNBROOK DRIVE", "SHAW BANK PLACE", "SHELLEY CLOSE", "SHEPPARD CLOSE", "SHERBORNE ROAD", "SHERIDAN CLOSE", "SHERINGHAM DRIVE", "SHERWIN STREET", "SHORT OAKES CLOSE", "SIDINGS CLOSE", "SIMPSON COURT", "SINGLETON AVENUE", "SKYLARK CLOSE", "SMALLBROOK WALK", "SMALLMAN ROAD", "SMITH GROVE", "SNAPE ROAD", "SOMERFORD AVENUE", "SOMERLEY CLOSE", "SOMERVILLE STREET", "SORBUS DRIVE", "SOUTH STREET", "SPRING GARDENS", "SPRINGWELL CLOSE", "ST ANDREWS AVENUE", "ST ANDREWS COURT", "ST CLAIR STREET", "ST MARYS STREET", "ST MICHAELS VIEW", "ST PAULS CLOSE", "ST PAULS STREET", "STABLE CROFT CLOSE", "STAFFORD STREET", "STALBRIDGE ROAD", "STAMFORD AVENUE", "STAMP AVENUE", "STAMP CLOSE", "STANHOPE AVENUE", "STANIER CLOSE", "STANLEY STREET", "STANTHORNE AVENUE", "STAPELEY COURT", "STEPHENSON DRIVE", "STEWART STREET", "STOKES AVENUE", "STONELEY AVENUE", "STONELEY ROAD", "STOWFORD", "SUNART CLOSE", "SUNDALE DRIVE", "SUNNYBANK ROAD", "SUNNYSIDE PLACE", "SURREY STREET", "SWEET BRIAR CRESCENT", "SWEET FIELD CLOSE", "SWINBURNE DRIVE", "SWINNERTON STREET", "SYCAMORE AVENUE", "TABLEY ROAD", "TAMERLANE ROAD", "TARVIN AVENUE", "TENNYSON AVENUE", "THE BACKLANDS", "THE BIRCHES", "THE CIRCLE", "THE HAVEN", "THE RETREAT", "THIRD AVENUE", "THOMAS BARBER CLOSE", "THOMAS SACKFIELD DRIVE", "THOMAS STREET", "THORN TREE DRIVE", "THORNEYCROFT WAY", "THORNFIELDS", "THORPE CLOSE", "TIMBRELL AVENUE", "TOLLEMACHE DRIVE", "TOLLITT STREET", "TOMKINSON CLOSE", "TOMMYS LANE", "TOTTYS HALL WAY", "TOWER WAY", "TREVITHICK CLOSE", "TURNER CLOSE", "TYNEDALE AVENUE", "UNDERWOOD LANE", "UNION STREET", "UNIVERSITY WAY", "URSULINE WAY", "VALLEY COURT", "VERDIN COURT", "VERE STREET", "VERNON STREET", "VERNON WAY", "VICTORIA AVENUE", "VICTORIA CENTRE", "VICTORIA STREET", "VILLIERS RUSSELL CLOSE", "VINCENT STREET", "VINE TREE AVENUE", "WADES FIELD PLACE", "WAINE STREET", "WAKEFIELD CLOSE", "WALDRONS LANE", "WALFORD AVENUE", "WALKER STREET", "WALKERS CROFT CLOSE", "WALLIS STREET", "WALTHALL STREET", "WAREHAM DRIVE", "WARMINGHAM ROAD", "WARRINGTON AVENUE", "WASDALE GROVE", "WASHINGTON DRIVE", "WAVERLEY COURT", "WESLEY PLACE", "WEST AVENUE", "WEST STREET", "WESTBOURNE AVENUE", "WESTBURY CLOSE", "WESTHOLME CLOSE", "WESTMERE DRIVE", "WESTMINSTER STREET", "WESTON CLOSE", "WESTON ROAD", "WHARFDALE AVENUE", "WHEATFIELD DRIVE", "WHEATLEY ROAD", "WHEELMAN ROAD", "WHIRLOW ROAD", "WHITBY CLOSE", "WHITE AVENUE", "WHITLEY PLACE", "WHITTAKER CLOSE", "WILDERHOPE CLOSE", "WILDING DRIVE", "WILDING STREET", "WILLIAM MORREY CLOSE", "WILLIAM STREET", "WILLIAM WAY", "WILSON PLACE", "WINDSOR AVENUE", "WISTASTON ROAD", "WOOD STREET", "WOODLAND AVENUE", "WOODLAND GARDENS", "WORDSWORTH DRIVE", "WORSDELL CLOSE", "WREN DRIVE", "WYNTER CLOSE", "YATES STREET"];
+
+const BBOX = "53.06,-2.52,53.14,-2.37";           // Crewe area (south,west,north,east)
+const VISITED_KEY = "crewe-visited-v1";
+const GEOM_KEY = "crewe-geom-v1";
+const ENDPOINTS = ["https://overpass-api.de/api/interpreter","https://overpass.kumi.systems/api/interpreter"];
+
+// ---------- state ----------
+let visited = new Set();
+try { visited = new Set(JSON.parse(localStorage.getItem(VISITED_KEY) || "[]")); } catch(e){}
+function saveVisited(){ try{ localStorage.setItem(VISITED_KEY, JSON.stringify([...visited])); }catch(e){} }
+
+const norm = s => s.toUpperCase().replace(/[.’']/g,"").replace(/\bSAINT\b/g,"ST").replace(/[^A-Z0-9]+/g," ").trim();
+const wanted = new Map();                           // normalised -> original name
+STREETS.forEach(n => wanted.set(norm(n), n));
+const layers = new Map();                           // name -> {group, line}
+
+// ---------- map ----------
+const map = L.map("map", { preferCanvas:true, zoomControl:false }).setView([53.098,-2.44], 14);
+L.control.zoom({position:"topright"}).addTo(map);
+L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:19,attribution:"© OpenStreetMap"}).addTo(map);
+
+const STYLE_NO  = {color:"#e11d48", weight:5, opacity:.75, lineCap:"round"};
+const STYLE_YES = {color:"#16a34a", weight:7, opacity:.95, lineCap:"round"};
+
+function toggle(name){
+  visited.has(name) ? visited.delete(name) : visited.add(name);
+  saveVisited(); restyle(name); renderList(); updateCount();
+}
+function restyle(name){
+  const l = layers.get(name); if(!l) return;
+  l.line.setStyle(visited.has(name) ? STYLE_YES : STYLE_NO);
+}
+
+function drawStreets(geom){
+  let found = 0;
+  for (const name of STREETS){
+    const ways = geom[name]; if(!ways) continue;
+    found++;
+    const line = L.polyline(ways, visited.has(name)?STYLE_YES:STYLE_NO);
+    const hit  = L.polyline(ways, {weight:26, opacity:0, color:"#000"});
+    const group = L.featureGroup([line, hit]).addTo(map);
+    hit.bindTooltip(name.toLowerCase().replace(/\b\w/g,c=>c.toUpperCase()), {sticky:true});
+    group.on("click", e => { L.DomEvent.stopPropagation(e); toggle(name); });
+    layers.set(name, {group, line, ways, bounds: group.getBounds()});
+  }
+  return found;
+}
+
+// ---------- data loading ----------
+async function fetchGeom(){
+  const q = `[out:json][timeout:90];way["highway"]["name"](${BBOX});out geom;`;
+  let lastErr;
+  for (const ep of ENDPOINTS){
+    try{
+      const r = await fetch(ep, {method:"POST", body:"data="+encodeURIComponent(q)});
+      if(!r.ok) throw new Error("HTTP "+r.status);
+      return await r.json();
+    }catch(e){ lastErr = e; }
+  }
+  throw lastErr;
+}
+function buildGeom(osm){
+  const out = {};
+  for (const w of osm.elements){
+    if(!w.geometry || !w.tags) continue;
+    const key = norm(w.tags.name || "");
+    const orig = wanted.get(key); if(!orig) continue;
+    (out[orig] ||= []).push(w.geometry.map(p => [+p.lat.toFixed(5), +p.lon.toFixed(5)]));
+  }
+  return out;
+}
+async function load(){
+  const st = document.getElementById("status");
+  let geom = null;
+  try{ geom = JSON.parse(localStorage.getItem(GEOM_KEY)||"null"); }catch(e){}
+  if(!geom){
+    try{
+      geom = buildGeom(await fetchGeom());
+      try{ localStorage.setItem(GEOM_KEY, JSON.stringify(geom)); }catch(e){}
+    }catch(e){
+      st.textContent = "Couldn't load roads (offline?)";
+      renderList(); return;
+    }
+  }
+  const n = drawStreets(geom);
+  st.textContent = `${n} of ${STREETS.length} on map`;
+  renderList();
+}
+
+// ---------- list UI ----------
+let filter = "all", query = "";
+const listEl = document.getElementById("list");
+const title = s => s.toLowerCase().replace(/\b\w/g,c=>c.toUpperCase()).replace(/\bSt\b/,"St");
+
+function renderList(){
+  const q = query.toLowerCase();
+  const rows = [];
+  STREETS.forEach((name,i) => {
+    if(q && !name.toLowerCase().includes(q)) return;
+    const v = visited.has(name);
+    if(filter==="yes" && !v) return;
+    if(filter==="no" && v) return;
+    const onMap = layers.has(name);
+    rows.push(`<div class="row ${onMap?"":"nomap"}" data-i="${i}">
+      <input type="checkbox" ${v?"checked":""}>
+      <div class="nm">${title(name)}${onMap?"":"<small>not found on map</small>"}</div>
+      <button class="go">Show</button></div>`);
+  });
+  listEl.innerHTML = rows.join("") || '<div class="row"><div class="nm">Nothing here</div></div>';
+}
+function updateCount(){
+  const total = STREETS.length, n = [...visited].filter(x=>STREETS.includes(x)).length;
+  document.getElementById("count").textContent = `${n} / ${total} visited`;
+  document.querySelector("#prog > div").style.width = (100*n/total)+"%";
+}
+listEl.addEventListener("click", e => {
+  const row = e.target.closest(".row"); if(!row || row.dataset.i===undefined) return;
+  const name = STREETS[+row.dataset.i];
+  if(e.target.classList.contains("go")){
+    const l = layers.get(name);
+    if(l){ document.getElementById("panel").classList.add("min"); map.fitBounds(l.group.getBounds(),{maxZoom:17,padding:[40,40]}); }
+  } else { toggle(name); }
+});
+document.getElementById("search").addEventListener("input", e => { query = e.target.value.trim(); renderList(); });
+document.querySelectorAll("[data-f]").forEach(b => b.addEventListener("click", () => {
+  filter = b.dataset.f;
+  document.querySelectorAll("[data-f]").forEach(x => x.classList.toggle("on", x===b));
+  renderList();
+}));
+document.getElementById("handle").addEventListener("click", () => document.getElementById("panel").classList.toggle("min"));
+
+// ---------- backup ----------
+document.getElementById("exp").onclick = () => {
+  const txt = JSON.stringify([...visited]);
+  if(navigator.clipboard){ navigator.clipboard.writeText(txt).then(()=>alert("Backup copied to clipboard"), ()=>prompt("Copy this:",txt)); }
+  else prompt("Copy this:", txt);
+};
+document.getElementById("imp").onclick = () => {
+  const t = prompt("Paste backup:"); if(!t) return;
+  try{ visited = new Set(JSON.parse(t)); saveVisited(); layers.forEach((_,n)=>restyle(n)); renderList(); updateCount(); }
+  catch(e){ alert("That doesn't look like a valid backup."); }
+};
+document.getElementById("clr").onclick = () => {
+  if(!confirm("Clear all visited roads?")) return;
+  visited.clear(); saveVisited(); layers.forEach((_,n)=>restyle(n)); renderList(); updateCount();
+};
+
+// ---------- live location ----------
+const AUTO_DIST = 15;    // metres from the road centre-line to count as "on" it
+const MAX_ACC   = 30;    // ignore GPS fixes worse than this (metres)
+const HITS_NEEDED = 3;   // consecutive fixes near a road before it's ticked (avoids junction pass-bys)
+
+let watchId = null, meMarker = null, meCircle = null, follow = true, wakeLock = null;
+const hits = {};
+const trackBtn = document.getElementById("track");
+const toastEl = document.getElementById("toast");
+let toastTimer;
+function toast(msg){ toastEl.textContent = msg; toastEl.classList.add("show"); clearTimeout(toastTimer); toastTimer = setTimeout(()=>toastEl.classList.remove("show"), 2500); }
+
+function distToStreet(lat, lng, ways){
+  const mx = 111320 * Math.cos(lat*Math.PI/180), my = 110540;
+  let best = Infinity;
+  for (const w of ways){
+    for (let i=0; i<w.length-1; i++){
+      const ax=(w[i][1]-lng)*mx,   ay=(w[i][0]-lat)*my;
+      const bx=(w[i+1][1]-lng)*mx, by=(w[i+1][0]-lat)*my;
+      const dx=bx-ax, dy=by-ay, l2=dx*dx+dy*dy;
+      const t = l2 ? Math.max(0, Math.min(1, -(ax*dx+ay*dy)/l2)) : 0;
+      const d = Math.hypot(ax+t*dx, ay+t*dy);
+      if (d < best) best = d;
+    }
+  }
+  return best;
+}
+
+function onPos(pos){
+  const {latitude:lat, longitude:lng, accuracy:acc} = pos.coords;
+  const ll = [lat, lng];
+  if (!meMarker){
+    meMarker = L.marker(ll, {icon:L.divIcon({className:"", html:'<div class="me"></div>', iconSize:[18,18], iconAnchor:[9,9]}), zIndexOffset:1000}).addTo(map);
+    meMarker.on("click", () => { follow = true; map.panTo(meMarker.getLatLng()); });
+    meCircle = L.circle(ll, {radius:acc, color:"#2563eb", weight:1, fillOpacity:.1, interactive:false}).addTo(map);
+    map.setView(ll, Math.max(map.getZoom(), 17));
+  } else {
+    meMarker.setLatLng(ll); meCircle.setLatLng(ll).setRadius(acc);
+    if (follow) map.panTo(ll, {animate:true});
+  }
+  if (acc > MAX_ACC) return;
+
+  const padLat = 0.00025, padLng = 0.0004;
+  layers.forEach((l, name) => {
+    if (visited.has(name)) return;
+    const b = l.bounds;
+    const inBox = lat > b.getSouth()-padLat && lat < b.getNorth()+padLat && lng > b.getWest()-padLng && lng < b.getEast()+padLng;
+    if (inBox && distToStreet(lat, lng, l.ways) <= AUTO_DIST){
+      hits[name] = (hits[name]||0) + 1;
+      if (hits[name] >= HITS_NEEDED){
+        visited.add(name); saveVisited(); restyle(name); renderList(); updateCount();
+        toast("✓ " + title(name));
+      }
+    } else if (hits[name]) hits[name] = 0;
+  });
+}
+
+async function keepAwake(){
+  try { if ("wakeLock" in navigator) wakeLock = await navigator.wakeLock.request("screen"); } catch(e){}
+}
+document.addEventListener("visibilitychange", () => { if (watchId !== null && document.visibilityState === "visible") keepAwake(); });
+map.on("dragstart", () => { follow = false; });
+
+function startTracking(){
+  if (!navigator.geolocation){ alert("This browser doesn't support location."); return; }
+  follow = true;
+  watchId = navigator.geolocation.watchPosition(onPos, err => {
+    toast(err.code === 1 ? "Location permission denied" : "Can't get location");
+    if (err.code === 1) stopTracking();
+  }, {enableHighAccuracy:true, maximumAge:1000, timeout:20000});
+  trackBtn.classList.add("on"); trackBtn.textContent = "📍 Tracking…";
+  document.getElementById("panel").classList.add("min");
+  keepAwake();
+}
+function stopTracking(){
+  if (watchId !== null) navigator.geolocation.clearWatch(watchId);
+  watchId = null;
+  if (wakeLock){ try{ wakeLock.release(); }catch(e){} wakeLock = null; }
+  trackBtn.classList.remove("on"); trackBtn.textContent = "📍 Track me";
+}
+trackBtn.onclick = () => watchId === null ? startTracking() : stopTracking();
+
+updateCount(); renderList(); load();
+</script>
+</body>
+</html>
