@@ -11,14 +11,14 @@
     :root { --bg:#16181d; --fg:#eef0f4; --muted:#9aa3b2; --line:#2a2e37; --chip:#242831; }
   }
   * { box-sizing: border-box; }
-  html, body { height:100%; margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; background:var(--bg); color:var(--fg); }
+  html, body { position:fixed; inset:0; width:100%; height:100%; overflow:hidden; overscroll-behavior:none; -webkit-text-size-adjust:100%; margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; background:var(--bg); color:var(--fg); }
   #map { position:absolute; inset:0; }
   #panel { position:absolute; left:0; right:0; bottom:0; z-index:1000; background:var(--bg); border-radius:16px 16px 0 0;
     box-shadow:0 -4px 20px rgba(0,0,0,.25); height:46vh; height:46dvh; display:flex; flex-direction:column;
-    transition:height .2s; padding-bottom:env(safe-area-inset-bottom,0); }
-  #panel.min { height:92px; }
-  #handle { padding:8px 14px 6px; cursor:pointer; }
-  #handle .bar { width:40px; height:4px; background:var(--line); border-radius:2px; margin:0 auto 8px; }
+    transition:height .2s; padding-bottom:env(safe-area-inset-bottom,0); overflow:hidden; overscroll-behavior:none; }
+  #panel.min { height:calc(92px + env(safe-area-inset-bottom,0px)); }
+  #handle { padding:8px 14px 6px; cursor:pointer; touch-action:none; -webkit-user-select:none; user-select:none; flex:none; }
+  #handle .bar { width:48px; height:5px; background:var(--line); border-radius:2px; margin:0 auto 8px; }
   #top { display:flex; align-items:center; justify-content:space-between; gap:10px; }
   #count { font-weight:700; font-size:15px; }
   #status { font-size:12px; color:var(--muted); }
@@ -28,7 +28,7 @@
   #search { flex:1; min-width:0; padding:9px 12px; border-radius:10px; border:1px solid var(--line); background:var(--chip); color:var(--fg); font-size:16px; }
   button { font:inherit; font-size:13px; padding:8px 10px; border-radius:10px; border:1px solid var(--line); background:var(--chip); color:var(--fg); }
   button.on { background:var(--accent); color:#fff; border-color:var(--accent); }
-  #list { flex:1; overflow-y:auto; -webkit-overflow-scrolling:touch; border-top:1px solid var(--line); }
+  #list { flex:1; overflow-y:auto; overscroll-behavior:contain; touch-action:pan-y; -webkit-overflow-scrolling:touch; border-top:1px solid var(--line); }
   .row { display:flex; align-items:center; gap:10px; padding:11px 14px; border-bottom:1px solid var(--line); }
   .row input { width:22px; height:22px; accent-color:var(--accent); flex:none; }
   .row .nm { flex:1; font-size:15px; }
@@ -203,7 +203,21 @@ document.querySelectorAll("[data-f]").forEach(b => b.addEventListener("click", (
   document.querySelectorAll("[data-f]").forEach(x => x.classList.toggle("on", x===b));
   renderList();
 }));
-document.getElementById("handle").addEventListener("click", () => document.getElementById("panel").classList.toggle("min"));
+(function(){
+  const panel = document.getElementById("panel"), h = document.getElementById("handle");
+  let y0 = null;
+  h.addEventListener("pointerdown", e => { y0 = e.clientY; try{ h.setPointerCapture(e.pointerId); }catch(_){} });
+  h.addEventListener("pointerup", e => {
+    if (y0 === null) return;
+    const dy = e.clientY - y0; y0 = null;
+    if (dy > 25) panel.classList.add("min");          // swipe down = roll down
+    else if (dy < -25) panel.classList.remove("min"); // swipe up = roll up
+    else panel.classList.toggle("min");               // tap = toggle
+  });
+  h.addEventListener("pointercancel", () => { y0 = null; });
+  // belt and braces: stop the page/map reacting to touches on the panel
+  panel.addEventListener("touchmove", e => { if (!e.target.closest("#list")) e.preventDefault(); }, {passive:false});
+})();
 
 // ---------- backup ----------
 document.getElementById("exp").onclick = () => {
